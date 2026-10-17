@@ -1,0 +1,143 @@
+#!/system/bin/sh
+# monmode: toggle Wi-Fi monitor mode on Qualcomm Android (Nothing Phone 2, qca6490).
+# Usage (as root):
+#   monmode on [channel|MHz]   default channel 1 (2412 MHz)
+#   monmode off
+#   monmode status
+#
+# Device specific: Nothing Phone 2 only. No fallback paths.
+# Channel input: 1-14 (2.4 GHz), 36-177 (5 GHz), or a frequency in MHz (>= 1000).
+
+IFACE="wlan0"
+DRV_PARAM="/sys/module/qca6490/parameters/con_mode"
+TMP_IW="/data/local/tmp/iw"
+TERMUX_PREFIX="/data/data/com.termux/files/usr"
+IW=""
+MODE_MONITOR=4
+MODE_MANAGED=0
+
+die() { echo "error: $*" >&2; exit 1; }
+log() { echo "[monmode] $*"; }
+
+need_root() {
+    [ "$(id -u)" = "0" ] || die "run as root (su)"
+}
+
+check_param() {
+    [ -w "$DRV_PARAM" ] || die "$DRV_PARAM not found or not writable"
+}
+
+# Resolve the iw binary:
+#   1. /system/bin/iw
+#   2. /data/local/tmp/iw
+#   3. if on Termux, install iw there, copy it to /data/local/tmp, chmod, use it
+resolve_iw() {
+    if [ -x /system/bin/iw ]; then
+        IW="/system/bin/iw"
+        return 0
+    fi
+
+    if [ -x "$TMP_IW" ]; then
+        IW="$TMP_IW"
+        return 0
+    fi
+
+    if [ -x "$TERMUX_PREFIX/bin/pkg" ] || [ -d "$TERMUX_PREFIX" ]; then
+        log "iw not found; installing via Termux"
+        "$TERMUX_PREFIX/bin/pkg" install -y iw || die "pkg install iw failed"
+        [ -x "$TERMUX_PREFIX/bin/iw" ] || die "iw not found after install"
+        cp "$TERMUX_PREFIX/bin/iw" "$TMP_IW" || die "cannot copy iw to $TMP_IW"
+        chmod 755 "$TMP_IW" || die "cannot chmod $TMP_IW"
+        IW="$TMP_IW"
+        return 0
+    fi
+
+    die "iw not found at /system/bin/iw or $TMP_IW, and Termux is not available to install it"
+}
+
+to_freq() {
+    n="$1"
+    case "$n" in
+        ''|*[!0-9]*) die "channel must be a number" ;;
+    esac
+    if [ "$n" -ge 1000 ]; then echo "$n"
+    elif [ "$n" -eq 14 ]; then echo 2484
+    elif [ "$n" -ge 1 ] && [ "$n" -le 13 ]; then echo $((2407 + 5 * n))
+    elif [ "$n" -ge 36 ] && [ "$n" -le 177 ]; then echo $((5000 + 5 * n))
+    else die "unsupported channel: $n"
+    fi
+}
+
+iface_type() { "$IW" dev "$IFACE" info 2>/dev/null | awk '$1=="type"{print $2}'; }
+
+iface_is_up() { ip -o link show "$IFACE" 2>/dev/null | grep -q '[<,]UP[,>]'; }
+
+bring_up() {
+    i=0
+    while [ $i -lt 5 ]; do
+        ip link set "$IFACE" up 2>/dev/null
+        iface_is_up && return 0
+        i=$((i + 1))
+        sleep 1
+    done
+    return 1
+}
+
+status() {
+    cur="$(cat "$DRV_PARAM" 2>/dev/null)"
+    typ="$(iface_type)"
+    if iface_is_up; then st=up; else st=down; fi
+    log "con_mode=$cur type=${typ:-unknown} link=$st"
+    "$IW" dev "$IFACE" info 2>/dev/null | grep -E 'channel|type'
+    [ "$typ" = "monitor" ] && [ "$st" = "up" ]
+}
+
+enable() {
+    freq="$(to_freq "${1:-1}")"
+
+    log "stopping Android Wi-Fi"
+    svc wifi disable
+    stop wpa_supplicant 2>/dev/null
+    pkill wpa_supplicant 2>/dev/null
+
+    log "switching driver to monitor mode"
+    ip link set "$IFACE" down || die "cannot bring $IFACE down"
+    echo "$MODE_MONITOR" > "$DRV_PARAM" || die "cannot write $DRV_PARAM"
+    bring_up || log "warning: $IFACE did not come up after mode switch"
+
+    log "setting frequency ${freq} MHz"
+    "$IW" dev "$IFACE" set freq "$freq" || log "warning: set freq failed"
+
+    # The interface can drop after a mode or channel change, so check again.
+    bring_up || die "$IFACE is not up; tcpdump will fail"
+
+    if status; then
+        log "monitor mode ON. Try: tcpdump -i $IFACE -e"
+    else
+        die "monitor mode verification failed"
+    fi
+}
+
+disable() {
+    log "restoring managed mode"
+    ip link set "$IFACE" down
+    echo "$MODE_MANAGED" > "$DRV_PARAM" || die "cannot write $DRV_PARAM"
+    bring_up
+    svc wifi enable
+    start wpa_supplicant 2>/dev/null
+    sleep 2
+    typ="$(iface_type)"
+    log "interface type now: ${typ:-unknown}"
+    [ "$typ" = "managed" ] || log "warning: not reporting managed yet, check Wi-Fi settings"
+}
+
+need_root
+check_param
+resolve_iw
+
+case "$1" in
+    on)     enable "$2" ;;
+    off)    disable ;;
+    status) status ;;
+    *)      echo "usage: $0 on [channel|MHz] | off | status"; exit 2 ;;
+esac

@@ -2,26 +2,10 @@
 
 Qualcomm QCACLD WiFi (Android) monitor mode
 
-[
-
-![Monitor mode](https://img.shields.io/badge/monitor%20mode-working-brightgreen.svg)
-
-]()
-[
-
-![Kali](https://img.shields.io/badge/Kali-supported-blue.svg)
-
-](https://www.kali.org)
-[
-
-![aircrack-ng](https://img.shields.io/badge/aircrack--ng-supported-blue.svg)
-
-](https://github.com/aircrack-ng/aircrack-ng)
-[
-
-![wifite2](https://img.shields.io/badge/wifite2-supported-blue.svg)
-
-](https://github.com/derv82/wifite2)
+[![Monitor mode](https://img.shields.io/badge/monitor%20mode-working-brightgreen.svg)]()
+[![Kali](https://img.shields.io/badge/Kali-supported-blue.svg)](https://www.kali.org)
+[![aircrack-ng](https://img.shields.io/badge/aircrack--ng-supported-blue.svg)](https://github.com/aircrack-ng/aircrack-ng)
+[![wifite2](https://img.shields.io/badge/wifite2-supported-blue.svg)](https://github.com/derv82/wifite2)
 
 ## NOTES
 
